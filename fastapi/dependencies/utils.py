@@ -2,6 +2,7 @@ import inspect
 from contextlib import AsyncExitStack, contextmanager
 from copy import copy, deepcopy
 from dataclasses import dataclass
+import types
 from typing import (
     Any,
     Callable,
@@ -704,6 +705,16 @@ def request_params_to_args(
     return values, errors
 
 
+_unset: Any = object()
+
+
+def _accepts_none(field: Any) -> bool:
+    origin = get_origin(field)
+    if (origin is Union or origin is types.UnionType) and type(None) in get_args(field):
+        return True
+    return False
+
+
 async def request_body_to_args(
     required_params: List[ModelField],
     received_body: Optional[Union[Dict[str, Any], FormData]],
@@ -725,7 +736,7 @@ async def request_body_to_args(
             else:
                 loc = ("body", field.alias)
 
-            value: Optional[Any] = None
+            value: Any = _unset
             if received_body is not None:
                 if (is_sequence_field(field)) and isinstance(received_body, FormData):
                     value = received_body.getlist(field.alias)
@@ -736,7 +747,8 @@ async def request_body_to_args(
                         errors.append(get_missing_field_error(loc))
                         continue
             if (
-                value is None
+                value is _unset
+                or value is None
                 or (isinstance(field_info, params.Form) and value == "")
                 or (
                     isinstance(field_info, params.Form)
@@ -746,6 +758,8 @@ async def request_body_to_args(
             ):
                 if field.required:
                     errors.append(get_missing_field_error(loc))
+                elif value is None and _accepts_none(field.type_):
+                    values[field.name] = value
                 else:
                     values[field.name] = deepcopy(field.default)
                 continue
